@@ -21,10 +21,10 @@ export type {
 import { getAccounts, getMailboxHierarchy } from './mail-accounts.js';
 
 // Import message operations
-import { getUnreadMails, getLatestMails } from './mail-messages.js';
+import { getUnreadMails, getLatestMails, getMailById } from './mail-messages.js';
 
 // Import search operations
-import { searchMails, searchInbox, searchInMailbox } from './mail-search.js';
+import { searchMails, searchInbox, searchInMailbox, searchByFlag } from './mail-search.js';
 
 // Import mail operations
 import { sendMail, markAsRead, deleteEmails, moveEmails } from './mail-operations.js';
@@ -38,11 +38,13 @@ export {
   // Message retrieval
   getUnreadMails,
   getLatestMails,
+  getMailById,
 
   // Search operations
   searchMails,
   searchInbox,
   searchInMailbox,
+  searchByFlag,
 
   // Mail operations
   sendMail,
@@ -56,9 +58,11 @@ const mailJXA = {
   getAccounts,
   getMailboxHierarchy,
   getUnreadMails,
+  getMailById,
   searchMails,
   searchInbox,
   searchInMailbox,
+  searchByFlag,
   getLatestMails,
   sendMail,
   markAsRead,

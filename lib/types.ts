@@ -21,14 +21,17 @@ export interface MailboxInfo {
 
 export interface EmailMessage {
   id: string;
+  messageId: string;
   subject: string;
   sender: string;
   recipients: string[];
+  ccRecipients?: string[];
   dateSent: string;
   dateReceived: string;
   content: string;
   isRead: boolean;
   isFlagged: boolean;
+  flagIndex: number;
   mailbox: string;
   accountName?: string;
 }

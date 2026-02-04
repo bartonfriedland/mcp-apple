@@ -17,9 +17,11 @@ import {
   GetMailboxesSchema,
   GetUnreadSchema,
   GetLatestSchema,
+  GetMailByIdSchema,
   SearchMailsSchema,
   SearchInboxSchema,
   SearchInMailboxSchema,
+  SearchByFlagSchema,
   SendMailSchema,
   MarkAsReadSchema,
   DeleteEmailsSchema,
@@ -131,6 +133,25 @@ const MAIL_TOOLS: Tool[] = [
     },
   },
   {
+    name: "mail_search_by_flag",
+    description: "Search emails by flag color across all accounts (0=red, 1=orange, 2=yellow, 3=green, 4=blue, 5=purple, 6=gray, -1=no flag)",
+    inputSchema: {
+      type: "object",
+      properties: {
+        flagIndex: {
+          type: "number",
+          description: "Flag color index: -1 (no flag), 0 (red), 1 (orange), 2 (yellow), 3 (green), 4 (blue), 5 (purple), 6 (gray)",
+        },
+        limit: {
+          type: "number",
+          description: "Maximum number of results",
+          default: 50,
+        },
+      },
+      required: ["flagIndex"],
+    },
+  },
+  {
     name: "mail_get_latest",
     description: "Get latest emails from a specific account",
     inputSchema: {
@@ -147,6 +168,20 @@ const MAIL_TOOLS: Tool[] = [
         },
       },
       required: ["accountName"],
+    },
+  },
+  {
+    name: "mail_read",
+    description: "Read a specific email by its ID and return full content",
+    inputSchema: {
+      type: "object",
+      properties: {
+        messageId: {
+          type: "string",
+          description: "The numeric ID or message-ID of the email to read",
+        },
+      },
+      required: ["messageId"],
     },
   },
   {
@@ -332,7 +367,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           `📧 ${email.subject}\n` +
           `   From: ${email.sender}\n` +
           `   Date: ${new Date(email.dateSent).toLocaleString()}\n` +
-          `   Mailbox: ${email.mailbox}\n`
+          `   Mailbox: ${email.mailbox}\n` +
+          `   Content: ${email.content || '[No content]'}\n`
         ).join('\n');
 
         return {
@@ -413,6 +449,37 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
 
+      case "mail_search_by_flag": {
+        const validated = SearchByFlagSchema.parse(args);
+        const { flagIndex, limit = 50 } = validated;
+        const emails = await mailJXA.searchByFlag(flagIndex, limit);
+
+        if (emails.length === 0) {
+          const flagColors = ['red', 'orange', 'yellow', 'green', 'blue', 'purple', 'gray'];
+          const flagName = flagIndex === -1 ? 'no flag' : flagColors[flagIndex] || `flag ${flagIndex}`;
+          return {
+            content: [{ type: "text", text: `No emails found with ${flagName}` }],
+          };
+        }
+
+        const flagColors = ['red', 'orange', 'yellow', 'green', 'blue', 'purple', 'gray'];
+        const flagName = flagIndex === -1 ? 'no flag' : flagColors[flagIndex] || `flag ${flagIndex}`;
+
+        const output = emails.map((email: any) =>
+          `📨 ${email.subject}\n` +
+          `   From: ${email.sender}\n` +
+          `   Date: ${new Date(email.dateReceived).toLocaleString()}\n` +
+          `   Account: ${email.accountName}\n` +
+          `   Mailbox: ${email.mailbox}\n` +
+          `   Message-ID: ${email.messageId}\n` +
+          `   Numeric ID: ${email.id}\n`
+        ).join('\n');
+
+        return {
+          content: [{ type: "text", text: `Found ${emails.length} emails with ${flagName}:\n\n${output}` }],
+        };
+      }
+
       case "mail_get_latest": {
         const validated = GetLatestSchema.parse(args);
         const { accountName, limit = 10 } = validated;
@@ -421,11 +488,41 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const output = emails.map((email: any, i: number) =>
           `${i + 1}. ${email.subject}\n` +
           `   From: ${email.sender}\n` +
-          `   Date: ${new Date(email.dateReceived).toLocaleString()}\n`
+          `   Date: ${new Date(email.dateReceived).toLocaleString()}\n` +
+          `   Content: ${email.content || '[No content]'}\n`
         ).join('\n');
 
         return {
           content: [{ type: "text", text: `Latest emails from ${accountName}:\n\n${output}` }],
+        };
+      }
+
+      case "mail_read": {
+        const validated = GetMailByIdSchema.parse(args);
+        const { messageId } = validated;
+        const email = await mailJXA.getMailById(messageId);
+
+        if (!email) {
+          return {
+            content: [{ type: "text", text: `Email not found with ID: ${messageId}` }],
+            isError: true,
+          };
+        }
+
+        const output =
+          `📧 ${email.subject}\n\n` +
+          `From: ${email.sender}\n` +
+          `To: ${email.recipients?.join(', ') || '[Unknown]'}\n` +
+          (email.ccRecipients?.length ? `CC: ${email.ccRecipients.join(', ')}\n` : '') +
+          `Date: ${new Date(email.dateReceived).toLocaleString()}\n` +
+          `Mailbox: ${email.mailbox} (${email.accountName})\n` +
+          `Read: ${email.isRead ? '✓' : '✗'} | Flagged: ${email.isFlagged ? '✓' : '✗'}\n` +
+          `Message-ID: ${email.messageId}\n` +
+          `\n---\n\n` +
+          `${email.content || '[No content]'}`;
+
+        return {
+          content: [{ type: "text", text: output }],
         };
       }
 

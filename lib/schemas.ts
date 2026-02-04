@@ -19,6 +19,10 @@ export const GetLatestSchema = z.object({
   limit: z.number().int().positive().max(100).default(10).optional()
 });
 
+export const GetMailByIdSchema = z.object({
+  messageId: z.string().min(1, 'Message ID is required')
+});
+
 // Search operations
 export const SearchMailsSchema = z.object({
   searchTerm: z.string().min(1, 'Search term is required'),
@@ -35,6 +39,11 @@ export const SearchInMailboxSchema = z.object({
   searchTerm: z.string().min(1, 'Search term is required'),
   accountName: z.string().optional(),
   limit: z.number().int().positive().max(100).default(20).optional()
+});
+
+export const SearchByFlagSchema = z.object({
+  flagIndex: z.number().int().min(-1).max(6, 'Flag index must be between -1 (none) and 6 (gray)'),
+  limit: z.number().int().positive().max(100).default(50).optional()
 });
 
 // Mail operations
@@ -66,9 +75,11 @@ export const MoveEmailsSchema = z.object({
 export type GetMailboxesInput = z.infer<typeof GetMailboxesSchema>;
 export type GetUnreadInput = z.infer<typeof GetUnreadSchema>;
 export type GetLatestInput = z.infer<typeof GetLatestSchema>;
+export type GetMailByIdInput = z.infer<typeof GetMailByIdSchema>;
 export type SearchMailsInput = z.infer<typeof SearchMailsSchema>;
 export type SearchInboxInput = z.infer<typeof SearchInboxSchema>;
 export type SearchInMailboxInput = z.infer<typeof SearchInMailboxSchema>;
+export type SearchByFlagInput = z.infer<typeof SearchByFlagSchema>;
 export type SendMailInput = z.infer<typeof SendMailSchema>;
 export type MarkAsReadInput = z.infer<typeof MarkAsReadSchema>;
 export type DeleteEmailsInput = z.infer<typeof DeleteEmailsSchema>;

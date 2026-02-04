@@ -164,3 +164,77 @@ export async function getLatestMails(accountName: string, limit = 10): Promise<E
     return allMessages.slice(0, ${limit});
   `, { timeout: 60000 });
 }
+
+/**
+ * Get a single email by its numeric ID with full content
+ */
+export async function getMailById(messageId: string): Promise<EmailMessage | null> {
+  const escapedId = escapeJXAString(messageId);
+
+  return runJXA<EmailMessage | null>(`
+    var Mail = Application('Mail');
+    var targetId = "${escapedId}";
+    var result = null;
+
+    // Search all accounts and mailboxes for the message
+    var accounts = Mail.accounts();
+
+    outer:
+    for (var a = 0; a < accounts.length; a++) {
+      try {
+        var mailboxes = accounts[a].mailboxes();
+
+        for (var i = 0; i < mailboxes.length; i++) {
+          var mailbox = mailboxes[i];
+
+          try {
+            var messages = mailbox.messages();
+
+            for (var j = 0; j < messages.length; j++) {
+              var msg = messages[j];
+
+              // Check both numeric ID and message-ID header
+              if (String(msg.id()) === targetId || msg.messageId() === targetId) {
+                var recipients = [];
+                try {
+                  var toRecipients = msg.toRecipients();
+                  for (var k = 0; k < toRecipients.length; k++) {
+                    recipients.push(toRecipients[k].address());
+                  }
+                } catch (e) {}
+
+                var ccRecipients = [];
+                try {
+                  var cc = msg.ccRecipients();
+                  for (var k = 0; k < cc.length; k++) {
+                    ccRecipients.push(cc[k].address());
+                  }
+                } catch (e) {}
+
+                result = {
+                  id: String(msg.id()),
+                  messageId: msg.messageId(),
+                  subject: msg.subject() || '[No Subject]',
+                  sender: (msg.sender() || '[Unknown]').toString(),
+                  recipients: recipients,
+                  ccRecipients: ccRecipients,
+                  dateSent: msg.dateSent().toISOString(),
+                  dateReceived: msg.dateReceived().toISOString(),
+                  content: msg.content() || '',
+                  isRead: msg.readStatus(),
+                  isFlagged: msg.flaggedStatus(),
+                  flagIndex: msg.flagIndex(),
+                  mailbox: mailbox.name(),
+                  accountName: accounts[a].name()
+                };
+                break outer;
+              }
+            }
+          } catch (e) {}
+        }
+      } catch (e) {}
+    }
+
+    return result;
+  `, { timeout: 60000 });
+}
