@@ -175,22 +175,22 @@ export async function getMailById(messageId: string): Promise<EmailMessage | nul
     var Mail = Application('Mail');
     var targetId = "${escapedId}";
     var result = null;
+    var found = false;
 
     // Search all accounts and mailboxes for the message
     var accounts = Mail.accounts();
 
-    outer:
-    for (var a = 0; a < accounts.length; a++) {
+    for (var a = 0; a < accounts.length && !found; a++) {
       try {
         var mailboxes = accounts[a].mailboxes();
 
-        for (var i = 0; i < mailboxes.length; i++) {
+        for (var i = 0; i < mailboxes.length && !found; i++) {
           var mailbox = mailboxes[i];
 
           try {
             var messages = mailbox.messages();
 
-            for (var j = 0; j < messages.length; j++) {
+            for (var j = 0; j < messages.length && !found; j++) {
               var msg = messages[j];
 
               // Check both numeric ID and message-ID header
@@ -227,7 +227,7 @@ export async function getMailById(messageId: string): Promise<EmailMessage | nul
                   mailbox: mailbox.name(),
                   accountName: accounts[a].name()
                 };
-                break outer;
+                found = true;
               }
             }
           } catch (e) {}

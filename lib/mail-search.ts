@@ -85,6 +85,7 @@ export async function searchMails(searchTerm: string, limit = 20): Promise<Email
                     content: '', // Skip content for performance
                     isRead: msg.readStatus(),
                     isFlagged: msg.flaggedStatus(),
+                    flagIndex: msg.flagIndex(),
                     mailbox: mailbox.name(),
                     accountName: accounts[a].name()
                   });
@@ -183,6 +184,7 @@ export async function searchInbox(searchTerm: string, limit = 20): Promise<Email
                 content: (msg.content() || '').substring(0, 200),
                 isRead: msg.readStatus(),
                 isFlagged: msg.flaggedStatus(),
+                flagIndex: msg.flagIndex(),
                 mailbox: inbox.name(),
                 accountName: inbox.account().name()
               });
@@ -297,6 +299,7 @@ export async function searchInMailbox(
               content: '', // Skip content for performance
               isRead: msg.readStatus(),
               isFlagged: msg.flaggedStatus(),
+              flagIndex: msg.flagIndex(),
               mailbox: targetMailbox.name(),
               accountName: targetMailbox.account().name()
             });
@@ -306,6 +309,93 @@ export async function searchInMailbox(
         } catch (e) {}
       }
     } catch (e) {}
+
+    return emails;
+  `);
+}
+
+/**
+ * Search emails by flag color across all accounts
+ */
+export async function searchByFlag(flagIndex: number, limit = 50): Promise<EmailMessage[]> {
+  const messagesPerMailbox = 200; // Check more messages per mailbox for flags
+
+  return runJXA<EmailMessage[]>(`
+    var Mail = Application('Mail');
+    var emails = [];
+    var targetFlagIndex = ${flagIndex};
+    var collected = 0;
+    var maxEmails = ${limit};
+    var messagesPerMailbox = ${messagesPerMailbox};
+
+    // Search across all accounts
+    var accounts = Mail.accounts();
+
+    for (var a = 0; a < accounts.length && collected < maxEmails; a++) {
+      try {
+        var mailboxes = accounts[a].mailboxes();
+
+        // Search all mailboxes in this account
+        for (var i = 0; i < mailboxes.length && collected < maxEmails; i++) {
+          var mailbox = mailboxes[i];
+
+          try {
+            var messages = mailbox.messages();
+            var messageCount = messages.length;
+
+            // Check configured number of messages per mailbox
+            var checkCount = Math.min(messagesPerMailbox, messageCount);
+            var startIdx = Math.max(0, messageCount - checkCount);
+
+            for (var j = messageCount - 1; j >= startIdx && collected < maxEmails; j--) {
+              try {
+                var msg = messages[j];
+
+                // Check if this message has the target flag
+                if (msg.flaggedStatus() && msg.flagIndex() === targetFlagIndex) {
+                  var recipients = [];
+                  try {
+                    var toRecipients = msg.toRecipients();
+                    for (var k = 0; k < Math.min(5, toRecipients.length); k++) {
+                      recipients.push(toRecipients[k].address());
+                    }
+                  } catch (e) {}
+
+                  emails.push({
+                    id: String(msg.id()),
+                    messageId: msg.messageId(),
+                    subject: msg.subject() || '[No Subject]',
+                    sender: (msg.sender() || '[Unknown]').toString(),
+                    recipients: recipients,
+                    dateSent: msg.dateSent().toISOString(),
+                    dateReceived: msg.dateReceived().toISOString(),
+                    content: (msg.content() || '').substring(0, 200),
+                    isRead: msg.readStatus(),
+                    isFlagged: msg.flaggedStatus(),
+                    flagIndex: msg.flagIndex(),
+                    mailbox: mailbox.name(),
+                    accountName: accounts[a].name()
+                  });
+
+                  collected++;
+                }
+              } catch (e) {
+                // Skip problematic messages
+              }
+            }
+          } catch (e) {
+            // Skip problematic mailboxes
+          }
+        }
+      } catch (e) {
+        // Skip problematic accounts
+      }
+    }
+
+    // Sort by date (newest first)
+    emails.sort(function(a, b) {
+      return new Date(b.dateReceived).getTime() - new Date(a.dateReceived).getTime();
+    });
 
     return emails;
   `);
