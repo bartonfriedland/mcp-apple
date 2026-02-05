@@ -77,31 +77,78 @@ When installed as a desktop extension, you can configure the following settings 
 
 ## Available Tools
 
-### `mail_get_accounts`
+### Reading & Searching
+
+#### `mail_get_accounts`
 Get all configured email accounts.
 
-### `mail_get_mailboxes`
+#### `mail_get_mailboxes`
 Get mailbox hierarchy for a specific account.
 
-### `mail_get_unread`
-Get unread emails (with configurable limit).
+#### `mail_get_unread`
+Get unread emails across all mailboxes (with configurable limit).
 
-### `mail_search`
-Search emails by text content.
-
-### `mail_get_latest`
+#### `mail_get_latest`
 Get latest emails from a specific account.
 
-### `mail_send`
+#### `mail_read`
+Read a specific email by its numeric ID or message-ID. Returns full content including body text.
+
+**Parameters:**
+- `messageId` (required): The numeric ID or message-ID of the email
+
+**Note:** This tool searches through mailboxes to find the email. For large mailboxes, this may take time. See Task #32 for optimization plans.
+
+#### `mail_search`
+Quick search in priority mailboxes (Inbox, Sent) - limited scope for performance.
+
+#### `mail_search_inbox`
+Search emails in all inbox folders across accounts. Fast, focused search.
+
+**Parameters:**
+- `searchTerm` (required): Text to search for
+- `limit` (optional): Maximum results (default: 20)
+
+#### `mail_search_mailbox`
+Search emails in a specific mailbox (includes content search).
+
+**Parameters:**
+- `mailboxName` (required): Name of the mailbox to search
+- `searchTerm` (required): Text to search for
+- `accountName` (optional): Account name (searches all if not specified)
+- `limit` (optional): Maximum results (default: 20)
+
+#### `mail_search_by_flag`
+Search emails by flag color across all accounts.
+
+**Parameters:**
+- `flagIndex` (required): Flag color index
+  - `-1` = no flag
+  - `0` = red, `1` = orange, `2` = yellow, `3` = green, `4` = blue, `5` = purple, `6` = gray
+- `limit` (optional): Maximum results (default: 50)
+
+### Composing & Sending
+
+#### `mail_send`
 Send email from a specific account.
 
-### `mail_mark_read`
-Mark emails as read by ID.
+**Parameters:**
+- `to` (required): Recipient email address
+- `subject` (required): Email subject
+- `body` (required): Email body content
+- `from` (optional): Account name to send from
+- `cc` (optional): CC recipients
+- `bcc` (optional): BCC recipients
 
-### `mail_delete`
-Delete emails by ID.
+### Managing
 
-### `mail_move`
+#### `mail_mark_read`
+Mark emails as read by their IDs.
+
+#### `mail_delete`
+Delete emails by their IDs.
+
+#### `mail_move`
 Move emails to a different mailbox by Message-ID.
 
 **Parameters:**
