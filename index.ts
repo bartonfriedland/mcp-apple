@@ -16,6 +16,7 @@ import mailJXA from "./lib/mail.js";
 import {
   GetMailboxesSchema,
   GetUnreadSchema,
+  GetInboxMessagesSchema,
   GetLatestSchema,
   GetMailByIdSchema,
   SearchMailsSchema,
@@ -63,6 +64,25 @@ const MAIL_TOOLS: Tool[] = [
           type: "number",
           description: "Maximum number of unread emails to retrieve",
           default: 20,
+        },
+      },
+    },
+  },
+  {
+    name: "mail_get_inboxes",
+    description: "Get recent messages from INBOX across all enabled accounts. Returns metadata only — use mail_read for full content.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        limit: {
+          type: "number",
+          description: "Maximum number of messages to retrieve (across all accounts)",
+          default: 20,
+        },
+        accounts: {
+          type: "array",
+          items: { type: "string" },
+          description: "Optional list of account names to check (default: all enabled accounts)",
         },
       },
     },
@@ -373,6 +393,48 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
         return {
           content: [{ type: "text", text: `Found ${emails.length} unread emails:\n\n${output}` }],
+        };
+      }
+
+      case "mail_get_inboxes": {
+        const validated = GetInboxMessagesSchema.parse(args);
+        const { limit = 20, accounts: requestedAccounts } = validated;
+
+        // Use config filtering: if specific accounts requested, intersect with config
+        const allAccounts = await mailJXA.getAccounts();
+        const enabledAccounts = filterAccounts(allAccounts, config);
+        const enabledNames = enabledAccounts.map(a => a.name);
+
+        let accountFilter: string[] | undefined;
+        if (requestedAccounts && requestedAccounts.length > 0) {
+          accountFilter = requestedAccounts.filter(name => enabledNames.includes(name));
+        } else {
+          accountFilter = enabledNames;
+        }
+
+        const result = await mailJXA.getInboxMessages(limit, accountFilter);
+
+        // Summary header with per-account counts
+        const summary = result.accounts.map((acc: any) =>
+          `${acc.name}: ${acc.inboxCount} messages (${acc.unreadCount} unread)`
+        ).join(' | ');
+
+        if (result.messages.length === 0) {
+          return {
+            content: [{ type: "text", text: `${summary}\n\nNo messages found in inboxes.` }],
+          };
+        }
+
+        const output = result.messages.map((email: any, i: number) =>
+          `${i + 1}. ${email.isRead ? ' ' : '*'} ${email.subject}\n` +
+          `   From: ${email.sender}\n` +
+          `   Date: ${new Date(email.dateReceived).toLocaleString()}\n` +
+          `   Account: ${email.accountName}\n` +
+          `   ID: ${email.id}\n`
+        ).join('\n');
+
+        return {
+          content: [{ type: "text", text: `${summary}\n\n${output}` }],
         };
       }
 

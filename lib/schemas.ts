@@ -19,6 +19,11 @@ export const GetLatestSchema = z.object({
   limit: z.number().int().positive().max(100).default(10).optional()
 });
 
+export const GetInboxMessagesSchema = z.object({
+  limit: z.number().int().positive().max(100).default(20).optional(),
+  accounts: z.array(z.string()).optional()
+});
+
 export const GetMailByIdSchema = z.object({
   messageId: z.string().min(1, 'Message ID is required')
 });

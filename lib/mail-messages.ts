@@ -41,7 +41,7 @@ function createMessageJXA(includeContent = true, contentLimit = 500): string {
 }
 
 /**
- * Get unread emails across all mailboxes
+ * Get unread emails across all account INBOXes
  */
 export async function getUnreadMails(limit = 20): Promise<EmailMessage[]> {
   return runJXA<EmailMessage[]>(`
@@ -50,32 +50,66 @@ export async function getUnreadMails(limit = 20): Promise<EmailMessage[]> {
     var collected = 0;
     var maxEmails = ${limit};
 
-    // Check recent mailboxes first
-    var allMailboxes = Mail.mailboxes();
-    var checkLimit = Math.min(30, allMailboxes.length);
+    // Iterate account mailboxes, not application-level mailboxes
+    var accounts = Mail.accounts();
 
-    for (var i = 0; i < checkLimit && collected < maxEmails; i++) {
-      var mailbox = allMailboxes[i];
-
+    for (var a = 0; a < accounts.length && collected < maxEmails; a++) {
       try {
-        var messages = mailbox.messages();
+        var account = accounts[a];
+        if (!account.enabled()) continue;
 
-        // Check from newest (usually at the end)
-        for (var j = messages.length - 1; j >= 0 && collected < maxEmails; j--) {
-          var msg = messages[j];
+        var mailboxes = account.mailboxes();
 
-          if (!msg.readStatus()) {
-            emails.push(${createMessageJXA()});
-            collected++;
+        // Check INBOX first, then other priority mailboxes
+        var priorityNames = ['INBOX', 'Sent Messages', 'Sent'];
+        var inboxes = [];
+        var others = [];
+
+        for (var i = 0; i < mailboxes.length; i++) {
+          var mbName = mailboxes[i].name();
+          var isPriority = false;
+          for (var p = 0; p < priorityNames.length; p++) {
+            if (mbName.toUpperCase() === priorityNames[p].toUpperCase()) {
+              isPriority = true;
+              break;
+            }
+          }
+          if (isPriority) {
+            inboxes.push(mailboxes[i]);
+          } else {
+            others.push(mailboxes[i]);
+          }
+        }
+
+        // Only check INBOX and priority mailboxes for unread
+        var toCheck = inboxes.concat(others.slice(0, 3));
+
+        for (var i = 0; i < toCheck.length && collected < maxEmails; i++) {
+          var mailbox = toCheck[i];
+
+          try {
+            var messages = mailbox.messages();
+            // Check from newest
+            var checkCount = Math.min(100, messages.length);
+            for (var j = messages.length - 1; j >= messages.length - checkCount && j >= 0 && collected < maxEmails; j--) {
+              var msg = messages[j];
+
+              if (!msg.readStatus()) {
+                emails.push(${createMessageJXA(false)});
+                collected++;
+              }
+            }
+          } catch (e) {
+            // Skip problematic mailboxes
           }
         }
       } catch (e) {
-        // Skip problematic mailboxes
+        // Skip problematic accounts
       }
     }
 
     return emails;
-  `);
+  `, { timeout: 60000 });
 }
 
 /**
@@ -132,9 +166,9 @@ export async function getLatestMails(accountName: string, limit = 10): Promise<E
       }
     }
 
-    // Check priority mailboxes first, then others
+    // Check priority mailboxes first, then a few others
     var orderedMailboxes = priorityMailboxes.concat(otherMailboxes);
-    var checkLimit = Math.min(10, orderedMailboxes.length);
+    var checkLimit = Math.min(6, orderedMailboxes.length);
 
     for (var i = 0; i < checkLimit; i++) {
       var mailbox = orderedMailboxes[i];
@@ -142,13 +176,12 @@ export async function getLatestMails(accountName: string, limit = 10): Promise<E
       try {
         var messages = mailbox.messages();
 
-        // Get recent messages from the end (check more messages for better coverage)
-        var checkCount = Math.min(50, messages.length);
-        var startIdx = Math.max(0, messages.length - checkCount);
+        // Get recent messages — metadata only, no content extraction
+        var checkCount = Math.min(30, messages.length);
 
-        for (var j = messages.length - 1; j >= startIdx; j--) {
+        for (var j = messages.length - 1; j >= messages.length - checkCount && j >= 0; j--) {
           var msg = messages[j];
-          allMessages.push(${createMessageJXA(true, 500)});
+          allMessages.push(${createMessageJXA(false)});
         }
       } catch (e) {
         // Skip problematic mailboxes
@@ -162,6 +195,108 @@ export async function getLatestMails(accountName: string, limit = 10): Promise<E
 
     // Return only the requested number of most recent emails
     return allMessages.slice(0, ${limit});
+  `, { timeout: 60000 });
+}
+
+export interface InboxResult {
+  accounts: { name: string; inboxCount: number; unreadCount: number }[];
+  messages: EmailMessage[];
+}
+
+/**
+ * Get recent INBOX messages across all enabled accounts.
+ * Optionally filter to specific account names.
+ * Returns metadata only — use getMailById for full content.
+ * Includes per-account inbox counts.
+ */
+export async function getInboxMessages(
+  limit = 20,
+  accountNames?: string[]
+): Promise<InboxResult> {
+  const accountFilter = accountNames && accountNames.length > 0
+    ? `var allowedAccounts = ${JSON.stringify(accountNames)};`
+    : `var allowedAccounts = null;`;
+
+  return runJXA<InboxResult>(`
+    var Mail = Application('Mail');
+    var allMessages = [];
+    var accountSummaries = [];
+    ${accountFilter}
+
+    var accounts = Mail.accounts();
+
+    for (var a = 0; a < accounts.length; a++) {
+      try {
+        var account = accounts[a];
+        if (!account.enabled()) continue;
+
+        var accountName = account.name();
+
+        // Skip if not in allowed list
+        if (allowedAccounts !== null) {
+          var allowed = false;
+          for (var f = 0; f < allowedAccounts.length; f++) {
+            if (allowedAccounts[f] === accountName) {
+              allowed = true;
+              break;
+            }
+          }
+          if (!allowed) continue;
+        }
+
+        // Find INBOX only
+        var mailboxes = account.mailboxes();
+        var inbox = null;
+
+        for (var i = 0; i < mailboxes.length; i++) {
+          if (mailboxes[i].name() === 'INBOX') {
+            inbox = mailboxes[i];
+            break;
+          }
+        }
+
+        if (!inbox) continue;
+
+        var mailbox = inbox;
+        var messages = mailbox.messages();
+        var totalCount = messages.length;
+
+        // Count unread
+        var unread = 0;
+        var countLimit = Math.min(totalCount, 200);
+        for (var u = 0; u < countLimit; u++) {
+          if (!messages[u].readStatus()) unread++;
+        }
+        if (totalCount > 200 && unread > 0) {
+          unread = Math.round(unread * totalCount / 200);
+        }
+
+        accountSummaries.push({
+          name: accountName,
+          inboxCount: totalCount,
+          unreadCount: unread
+        });
+
+        var checkCount = Math.min(${limit}, totalCount);
+
+        for (var j = messages.length - 1; j >= messages.length - checkCount && j >= 0; j--) {
+          var msg = messages[j];
+          allMessages.push(${createMessageJXA(false)});
+        }
+      } catch (e) {
+        // Skip problematic accounts
+      }
+    }
+
+    // Sort by date, newest first
+    allMessages.sort(function(a, b) {
+      return new Date(b.dateReceived).getTime() - new Date(a.dateReceived).getTime();
+    });
+
+    return {
+      accounts: accountSummaries,
+      messages: allMessages.slice(0, ${limit})
+    };
   `, { timeout: 60000 });
 }
 

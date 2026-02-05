@@ -86,6 +86,9 @@ export async function getMailboxHierarchy(accountName: string): Promise<MailboxH
     const allMailboxes = targetAccount.mailboxes();
     const childrenMap = {};
 
+    // Only count unread for priority mailboxes (INBOX, Sent, Drafts)
+    var priorityNames = ['INBOX', 'SENT', 'SENT MESSAGES', 'DRAFTS'];
+
     for (let i = 0; i < allMailboxes.length; i++) {
       const mb = allMailboxes[i];
       const name = mb.name();
@@ -98,16 +101,26 @@ export async function getMailboxHierarchy(accountName: string): Promise<MailboxH
         const messages = mb.messages();
         messageCount = messages.length;
 
-        // Count unread (limit to first 100 for performance)
-        for (let j = 0; j < Math.min(100, messages.length); j++) {
-          if (!messages[j].readStatus()) {
-            unreadCount++;
+        // Only count unread for priority mailboxes to avoid timeout
+        var isPriority = false;
+        for (var p = 0; p < priorityNames.length; p++) {
+          if (name.toUpperCase() === priorityNames[p]) {
+            isPriority = true;
+            break;
           }
         }
 
-        // Estimate for large mailboxes
-        if (messages.length > 100 && unreadCount > 0) {
-          unreadCount = Math.round(unreadCount * messages.length / 100);
+        if (isPriority) {
+          var checkLimit = Math.min(100, messages.length);
+          for (let j = 0; j < checkLimit; j++) {
+            if (!messages[j].readStatus()) {
+              unreadCount++;
+            }
+          }
+
+          if (messages.length > 100 && unreadCount > 0) {
+            unreadCount = Math.round(unreadCount * messages.length / 100);
+          }
         }
       } catch (e) {}
 
