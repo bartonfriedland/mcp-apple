@@ -25,7 +25,9 @@ export const GetInboxMessagesSchema = z.object({
 });
 
 export const GetMailByIdSchema = z.object({
-  messageId: z.string().min(1, 'Message ID is required')
+  messageId: z.string().min(1, 'Message ID is required'),
+  accountName: z.string().optional(),
+  mailboxName: z.string().optional()
 });
 
 // Search operations

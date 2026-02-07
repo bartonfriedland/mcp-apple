@@ -192,13 +192,21 @@ const MAIL_TOOLS: Tool[] = [
   },
   {
     name: "mail_read",
-    description: "Read a specific email by its ID and return full content",
+    description: "Read a specific email by its ID and return full content. Pass accountName and mailboxName from listing results for fast lookup.",
     inputSchema: {
       type: "object",
       properties: {
         messageId: {
           type: "string",
           description: "The numeric ID or message-ID of the email to read",
+        },
+        accountName: {
+          type: "string",
+          description: "Account name hint (from listing results) for fast lookup",
+        },
+        mailboxName: {
+          type: "string",
+          description: "Mailbox name hint (from listing results) for fast lookup",
         },
       },
       required: ["messageId"],
@@ -561,8 +569,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case "mail_read": {
         const validated = GetMailByIdSchema.parse(args);
-        const { messageId } = validated;
-        const email = await mailJXA.getMailById(messageId);
+        const { messageId, accountName: hintAccount, mailboxName: hintMailbox } = validated;
+        const email = await mailJXA.getMailById(messageId, hintAccount, hintMailbox);
 
         if (!email) {
           return {

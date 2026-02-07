@@ -301,73 +301,201 @@ export async function getInboxMessages(
 }
 
 /**
- * Get a single email by its numeric ID with full content
+ * Get a single email by its numeric ID with full content.
+ *
+ * Uses indexed access (O(1) per message) scanning recent messages,
+ * NOT the `whose` clause which is O(n) and times out on large mailboxes.
+ *
+ * Optional accountName/mailboxName hints let callers direct the search
+ * to the right mailbox immediately — listing functions return both fields
+ * for every message, so callers should always pass them when available.
+ *
+ * Scan depth: checks the most recent SCAN_DEPTH messages per mailbox.
  */
-export async function getMailById(messageId: string): Promise<EmailMessage | null> {
+const SCAN_DEPTH = 500;
+
+export async function getMailById(
+  messageId: string,
+  accountName?: string,
+  mailboxName?: string,
+): Promise<EmailMessage | null> {
   const escapedId = escapeJXAString(messageId);
+  const escapedAccount = accountName ? escapeJXAString(accountName) : '';
+  const escapedMailbox = mailboxName ? escapeJXAString(mailboxName) : '';
 
   return runJXA<EmailMessage | null>(`
     var Mail = Application('Mail');
-    var targetId = "${escapedId}";
+    var rawId = "${escapedId}";
+    var numericId = parseInt(rawId, 10);
+    var isNumeric = !isNaN(numericId) && String(numericId) === rawId;
+    var hintAccount = "${escapedAccount}" || null;
+    var hintMailbox = "${escapedMailbox}" || null;
+    var SCAN_DEPTH = ${SCAN_DEPTH};
     var result = null;
     var found = false;
 
-    // Search all accounts and mailboxes for the message
-    var accounts = Mail.accounts();
-
-    for (var a = 0; a < accounts.length && !found; a++) {
+    function extractMessage(msg, mailbox, accountName) {
+      var recipients = [];
       try {
-        var mailboxes = accounts[a].mailboxes();
+        var toRecipients = msg.toRecipients();
+        for (var k = 0; k < toRecipients.length; k++) {
+          recipients.push(toRecipients[k].address());
+        }
+      } catch (e) {}
 
-        for (var i = 0; i < mailboxes.length && !found; i++) {
-          var mailbox = mailboxes[i];
+      var ccRecipients = [];
+      try {
+        var cc = msg.ccRecipients();
+        for (var k = 0; k < cc.length; k++) {
+          ccRecipients.push(cc[k].address());
+        }
+      } catch (e) {}
 
+      return {
+        id: String(msg.id()),
+        messageId: msg.messageId(),
+        subject: msg.subject() || '[No Subject]',
+        sender: (msg.sender() || '[Unknown]').toString(),
+        recipients: recipients,
+        ccRecipients: ccRecipients,
+        dateSent: msg.dateSent().toISOString(),
+        dateReceived: msg.dateReceived().toISOString(),
+        content: msg.content() || '',
+        isRead: msg.readStatus(),
+        isFlagged: msg.flaggedStatus(),
+        flagIndex: msg.flagIndex(),
+        mailbox: mailbox.name(),
+        accountName: accountName
+      };
+    }
+
+    // Scan recent messages in a mailbox by index (fast O(1) access per message).
+    // Returns match or null. Checks newest first up to SCAN_DEPTH.
+    function scanMailbox(mailbox, accountName) {
+      try {
+        var messages = mailbox.messages;
+        var total = messages.length;
+        var scanCount = Math.min(SCAN_DEPTH, total);
+
+        for (var j = total - 1; j >= total - scanCount && j >= 0; j--) {
           try {
-            var messages = mailbox.messages();
-
-            for (var j = 0; j < messages.length && !found; j++) {
-              var msg = messages[j];
-
-              // Check both numeric ID and message-ID header
-              if (String(msg.id()) === targetId || msg.messageId() === targetId) {
-                var recipients = [];
-                try {
-                  var toRecipients = msg.toRecipients();
-                  for (var k = 0; k < toRecipients.length; k++) {
-                    recipients.push(toRecipients[k].address());
-                  }
-                } catch (e) {}
-
-                var ccRecipients = [];
-                try {
-                  var cc = msg.ccRecipients();
-                  for (var k = 0; k < cc.length; k++) {
-                    ccRecipients.push(cc[k].address());
-                  }
-                } catch (e) {}
-
-                result = {
-                  id: String(msg.id()),
-                  messageId: msg.messageId(),
-                  subject: msg.subject() || '[No Subject]',
-                  sender: (msg.sender() || '[Unknown]').toString(),
-                  recipients: recipients,
-                  ccRecipients: ccRecipients,
-                  dateSent: msg.dateSent().toISOString(),
-                  dateReceived: msg.dateReceived().toISOString(),
-                  content: msg.content() || '',
-                  isRead: msg.readStatus(),
-                  isFlagged: msg.flaggedStatus(),
-                  flagIndex: msg.flagIndex(),
-                  mailbox: mailbox.name(),
-                  accountName: accounts[a].name()
-                };
-                found = true;
+            var msg = messages[j];
+            var msgId = msg.id();
+            if (isNumeric) {
+              if (msgId === numericId) {
+                return extractMessage(msg, mailbox, accountName);
+              }
+            } else {
+              if (msg.messageId() === rawId) {
+                return extractMessage(msg, mailbox, accountName);
               }
             }
           } catch (e) {}
         }
       } catch (e) {}
+      return null;
+    }
+
+    var accounts = Mail.accounts();
+
+    // If we have account + mailbox hints, go directly there first
+    if (hintAccount && hintMailbox) {
+      for (var a = 0; a < accounts.length && !found; a++) {
+        try {
+          var account = accounts[a];
+          if (account.name() !== hintAccount) continue;
+
+          var mailboxes = account.mailboxes();
+          for (var i = 0; i < mailboxes.length && !found; i++) {
+            if (mailboxes[i].name() === hintMailbox) {
+              result = scanMailbox(mailboxes[i], account.name());
+              if (result) found = true;
+              break;
+            }
+          }
+        } catch (e) {}
+      }
+    }
+
+    // If we have just an account hint, check its INBOX then other mailboxes
+    if (!found && hintAccount) {
+      for (var a = 0; a < accounts.length && !found; a++) {
+        try {
+          var account = accounts[a];
+          if (account.name() !== hintAccount) continue;
+
+          var mailboxes = account.mailboxes();
+          // INBOX first
+          for (var i = 0; i < mailboxes.length && !found; i++) {
+            if (mailboxes[i].name() === 'INBOX') {
+              result = scanMailbox(mailboxes[i], account.name());
+              if (result) found = true;
+              break;
+            }
+          }
+          // Then other priority mailboxes
+          if (!found) {
+            var priorityNames = ['Sent Messages', 'Sent', 'Drafts'];
+            for (var i = 0; i < mailboxes.length && !found; i++) {
+              var mbName = mailboxes[i].name();
+              if (mbName === 'INBOX') continue;
+              if (hintMailbox && mbName === hintMailbox) continue; // already checked
+              for (var p = 0; p < priorityNames.length; p++) {
+                if (mbName === priorityNames[p]) {
+                  result = scanMailbox(mailboxes[i], account.name());
+                  if (result) found = true;
+                  break;
+                }
+              }
+            }
+          }
+        } catch (e) {}
+      }
+    }
+
+    // Fallback: scan INBOX of each account (no hints or hints didn't match)
+    if (!found) {
+      for (var a = 0; a < accounts.length && !found; a++) {
+        try {
+          var account = accounts[a];
+          if (!account.enabled()) continue;
+          if (hintAccount && account.name() === hintAccount) continue; // already checked
+
+          var mailboxes = account.mailboxes();
+          for (var i = 0; i < mailboxes.length && !found; i++) {
+            if (mailboxes[i].name() === 'INBOX') {
+              result = scanMailbox(mailboxes[i], account.name());
+              if (result) found = true;
+              break;
+            }
+          }
+        } catch (e) {}
+      }
+    }
+
+    // Last resort: priority mailboxes of remaining accounts
+    if (!found) {
+      var priorityNames = ['Sent Messages', 'Sent', 'Drafts'];
+      for (var a = 0; a < accounts.length && !found; a++) {
+        try {
+          var account = accounts[a];
+          if (!account.enabled()) continue;
+          if (hintAccount && account.name() === hintAccount) continue;
+
+          var mailboxes = account.mailboxes();
+          for (var i = 0; i < mailboxes.length && !found; i++) {
+            var mbName = mailboxes[i].name();
+            if (mbName === 'INBOX') continue;
+            for (var p = 0; p < priorityNames.length; p++) {
+              if (mbName === priorityNames[p]) {
+                result = scanMailbox(mailboxes[i], account.name());
+                if (result) found = true;
+                break;
+              }
+            }
+          }
+        } catch (e) {}
+      }
     }
 
     return result;
