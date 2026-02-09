@@ -314,7 +314,9 @@ const server = new Server(
   },
   {
     capabilities: {
+      resources: {},
       tools: {},
+      prompts: {},
     },
   }
 );
