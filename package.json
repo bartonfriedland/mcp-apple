@@ -4,6 +4,9 @@
   "description": "Clean Apple Mail MCP server using JXA - no string parsing!",
   "type": "module",
   "main": "dist/index.js",
+  "bin": {
+    "mcp-apple": "dist/index.js"
+  },
   "module": "index.ts",
   "scripts": {
     "dev": "node --import tsx index.ts",
