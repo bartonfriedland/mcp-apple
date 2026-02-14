@@ -6,12 +6,14 @@
  */
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import {
   ListToolsRequestSchema,
   CallToolRequestSchema,
   Tool,
 } from "@modelcontextprotocol/sdk/types.js";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { randomUUID } from "node:crypto";
 import mailJXA from "./lib/mail.js";
 import {
   GetMailboxesSchema,
@@ -670,14 +672,120 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
 });
 
-// Start server
-async function main() {
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
-  console.error("Apple Mail MCP Server running...");
+// --- HTTP Transport ---
+
+const PORT = parseInt(process.env.MCP_APPLE_MAIL_PORT ?? "8263", 10);
+const AUTH_TOKEN = process.env.MCP_APPLE_MAIL_TOKEN ?? "";
+
+const transports = new Map<string, StreamableHTTPServerTransport>();
+
+function parseBody(req: IncomingMessage): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (chunk: Buffer) => chunks.push(chunk));
+    req.on("end", () => {
+      try {
+        resolve(JSON.parse(Buffer.concat(chunks).toString()));
+      } catch (e) {
+        reject(e);
+      }
+    });
+    req.on("error", reject);
+  });
 }
 
-main().catch((error) => {
-  console.error("Server error:", error);
-  process.exit(1);
+function checkAuth(req: IncomingMessage, res: ServerResponse): boolean {
+  if (!AUTH_TOKEN) return true; // no token configured = no auth required
+  const header = req.headers.authorization ?? "";
+  if (header === `Bearer ${AUTH_TOKEN}`) return true;
+  res.writeHead(401, { "Content-Type": "application/json" });
+  res.end(JSON.stringify({ error: "Unauthorized" }));
+  return false;
+}
+
+const httpServer = createServer(async (req, res) => {
+  const url = new URL(req.url ?? "/", `http://127.0.0.1:${PORT}`);
+
+  // Health endpoint (no auth)
+  if (url.pathname === "/health") {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ status: "ok" }));
+    return;
+  }
+
+  // MCP endpoint
+  if (url.pathname === "/mcp") {
+    if (!checkAuth(req, res)) return;
+
+    if (req.method === "POST") {
+      try {
+        const body = await parseBody(req);
+        const sessionId = req.headers["mcp-session-id"] as string | undefined;
+        let transport = sessionId ? transports.get(sessionId) : undefined;
+
+        if (!transport) {
+          transport = new StreamableHTTPServerTransport({
+            sessionIdGenerator: () => randomUUID(),
+            onsessioninitialized: (id) => {
+              transports.set(id, transport!);
+            },
+          });
+
+          transport.onclose = () => {
+            const sid = [...transports.entries()].find(([, t]) => t === transport)?.[0];
+            if (sid) transports.delete(sid);
+          };
+
+          await server.connect(transport);
+        }
+
+        await transport.handleRequest(req, res, body);
+      } catch (error) {
+        if (!res.headersSent) {
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "Internal server error" }));
+        }
+      }
+      return;
+    }
+
+    if (req.method === "GET") {
+      const sessionId = req.headers["mcp-session-id"] as string | undefined;
+      const transport = sessionId ? transports.get(sessionId) : undefined;
+      if (!transport) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "No active session" }));
+        return;
+      }
+      await transport.handleRequest(req, res);
+      return;
+    }
+
+    if (req.method === "DELETE") {
+      const sessionId = req.headers["mcp-session-id"] as string | undefined;
+      const transport = sessionId ? transports.get(sessionId) : undefined;
+      if (transport) {
+        await transport.handleRequest(req, res);
+        transports.delete(sessionId!);
+      } else {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "No active session" }));
+      }
+      return;
+    }
+
+    res.writeHead(405, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "Method not allowed" }));
+    return;
+  }
+
+  // Fallback
+  res.writeHead(404, { "Content-Type": "application/json" });
+  res.end(JSON.stringify({ error: "Not found" }));
+});
+
+httpServer.listen(PORT, "127.0.0.1", () => {
+  console.error(`Apple Mail MCP Server (HTTP) listening on http://127.0.0.1:${PORT}`);
+  console.error(`Health: http://127.0.0.1:${PORT}/health`);
+  console.error(`MCP:    http://127.0.0.1:${PORT}/mcp`);
 });

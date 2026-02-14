@@ -9,8 +9,8 @@
   },
   "module": "index.ts",
   "scripts": {
-    "dev": "node --import tsx index.ts",
-    "build": "tsc && esbuild index.ts --bundle --platform=node --target=node16 --format=esm --outfile=dist/index.js --minify --external:@modelcontextprotocol/sdk --external:zod",
+    "dev": "MCP_APPLE_MAIL_TOKEN=dev node --import tsx index.ts",
+    "build": "esbuild index.ts --bundle --platform=node --target=node18 --format=esm --outfile=dist/index.js --minify --packages=external",
     "test": "node --import tsx test/test-mail.ts",
     "pack": "mcpb pack"
   },
